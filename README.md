@@ -1,3 +1,13 @@
+---
+title: Turo MCP Server
+emoji: 🐳
+colorFrom: purple
+colorTo: gray
+sdk: docker
+app_port: 8080
+pinned: false
+---
+
 # Turo MCP Server
 
 MCP server over the Arturo API for **pathway editing**, **Reel 3.0 generation** and
@@ -104,6 +114,29 @@ Terminate TLS at the ingress. The request carries a credential and the responses
 tenant content.
 
 ## Hosting it for a demo
+
+### Hugging Face Spaces
+
+Free, no card, and a private Space keeps the code off the open web. The YAML block
+at the top of this README is what makes it a Docker Space (`app_port: 8080` must
+match `MCP_PORT` in the Dockerfile).
+
+1. [New Space](https://huggingface.co/new-space) → SDK **Docker** → visibility
+   **Private**.
+2. Push this repo to the Space's git remote.
+3. Space **Settings → Variables and secrets** → add secret `MCP_PATH` = a long
+   random string. **Do this before the first boot.** Without it the server mounts
+   at `/mcp`, and since `MCP_ALLOWED_HOSTS` is `*`, anyone who finds the Space URL
+   can call `set_session` and then act as whatever cookie is loaded.
+4. Leave `ARTURO_SESSION` unset so callers supply their own cookie.
+
+Endpoint: `https://<user>-<space>.hf.space/<MCP_PATH>`
+
+Spaces sleep when idle and the container's disk is wiped on restart. Neither
+matters here — nothing is persisted, and a restart just costs one silent
+`set_session` re-send.
+
+### Render
 
 Free tier on [Render](https://render.com), via `render.yaml` in this directory.
 
