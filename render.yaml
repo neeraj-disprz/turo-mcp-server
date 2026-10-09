@@ -1,0 +1,32 @@
+# Render blueprint — free tier, public HTTPS, no card required.
+# Deploy: render.com -> New -> Blueprint -> point at this repo.
+#
+# Free instances sleep after ~15 minutes idle and take ~50s to wake, so the
+# first tool call of a demo will be slow. That is the only free-tier catch.
+services:
+  - type: web
+    name: turo-mcp
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: ARTURO_API_BASE_URL
+        value: https://turo.disprz.ai
+      - key: ARTURO_API_PREFIX
+        value: /ui/api
+      # Unguessable mount path. Required whenever this instance ends up holding a
+      # cookie — from ARTURO_SESSION below, or from a caller's `set_session` —
+      # because the stored cookie is then reachable by anyone with the URL.
+      - key: MCP_PATH
+        generateValue: true
+      # The MCP SDK rejects unknown Host headers as DNS-rebinding protection,
+      # so the public hostname must be declared or every request returns 421.
+      # Set this to the service's own host once Render assigns it
+      # (turo-mcp-xxxx.onrender.com), or "*" to accept any.
+      - key: MCP_ALLOWED_HOSTS
+        sync: false
+      # Demo only: the Arturo session cookie this instance acts as.
+      # Set it in the Render dashboard, never in this file. Expires 24h after login.
+      - key: ARTURO_SESSION
+        sync: false
