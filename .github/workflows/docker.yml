@@ -13,6 +13,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Backstop: without this a hung step runs to GitHub's 6-hour default.
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -40,19 +42,28 @@ jobs:
             ${{ steps.name.outputs.image }}:${{ github.sha }}
 
       - name: Smoke-test the built image
-        # Starts the server and checks it answers, so a broken image fails here
-        # rather than silently on the host. The MCP endpoint 400s without a
-        # proper session handshake; any HTTP response proves the app booted.
+        timeout-minutes: 3
+        # Waits for the server's own startup line rather than curling the mount
+        # path: a GET there opens a long-lived SSE stream, so curl would block
+        # until the job timed out instead of returning a status code.
         run: |
           docker run -d --name turo -p 8080:8080 \
             -e MCP_PATH=smoketest ${{ steps.name.outputs.image }}:${{ github.sha }}
-          for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8080/smoketest 2>/dev/null; then break; fi
-            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/smoketest)" != "000" ]; then break; fi
-            sleep 2
+
+          for _ in $(seq 1 60); do
+            if docker logs turo 2>&1 | grep -q "Application startup complete"; then
+              echo "server came up"
+              docker logs turo
+              exit 0
+            fi
+            if [ -z "$(docker ps -q -f name=turo)" ]; then
+              echo "container exited before startup:"
+              docker logs turo
+              exit 1
+            fi
+            sleep 1
           done
-          echo "--- container logs ---"
+
+          echo "timed out waiting for startup:"
           docker logs turo
-          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/smoketest)
-          echo "HTTP $code from the mount path"
-          test "$code" != "000"
+          exit 1
