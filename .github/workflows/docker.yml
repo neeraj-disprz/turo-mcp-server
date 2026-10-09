@@ -1,0 +1,58 @@
+name: Build and publish image
+
+# Builds the Dockerfile on GitHub's runners and pushes the result to GHCR.
+# Two reasons this exists rather than a host building from source:
+#   - it proves the image builds at all, independently of any hosting platform
+#   - the published image can be deployed by a host that has no access to this
+#     repo, which sidesteps the GitHub-App connection dance entirely
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr.io rejects uppercase paths, and GitHub usernames may contain them.
+      - name: Normalise image name
+        id: name
+        run: echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.name.outputs.image }}:latest
+            ${{ steps.name.outputs.image }}:${{ github.sha }}
+
+      - name: Smoke-test the built image
+        # Starts the server and checks it answers, so a broken image fails here
+        # rather than silently on the host. The MCP endpoint 400s without a
+        # proper session handshake; any HTTP response proves the app booted.
+        run: |
+          docker run -d --name turo -p 8080:8080 \
+            -e MCP_PATH=smoketest ${{ steps.name.outputs.image }}:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8080/smoketest 2>/dev/null; then break; fi
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/smoketest)" != "000" ]; then break; fi
+            sleep 2
+          done
+          echo "--- container logs ---"
+          docker logs turo
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/smoketest)
+          echo "HTTP $code from the mount path"
+          test "$code" != "000"
