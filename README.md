@@ -11,7 +11,7 @@ pinned: false
 # Turo MCP Server
 
 MCP server over the Arturo API for **pathway editing**, **Reel 3.0 generation** and
-**Single-Turn Simulation generation and editing**. 25 tools. The specification this
+**Single-Turn Simulation generation and editing**. 28 tools. The specification this
 implements lives in the Arturo-API repo at `docs/turo-mcp-tools.md`.
 
 This is a standalone deployment copy — the server talks to Arturo over HTTP and needs
@@ -225,11 +225,27 @@ shell. Hostname and path change on every run.
 `create_concept`, `update_concept`, `delete_concepts`, `reorder_pathway`
 **Reel 3.0** — `get_concept_kb`, `set_concept_kb`, `generate_reel_script`, `get_reel_script`,
 `list_reel_voices`, `generate_reel3`, `get_reel3_status`
+**Reel 3.0 editing** — `save_reel`, `regenerate_scene_narration`, `get_reel_audio_status`
 **Simulation** — `generate_simulation_script`, `generate_simulation`, `get_simulation`
 **Simulation editing** — `save_simulation`, `regenerate_simulation_image`,
 `replace_simulation_audio`, `get_simulation_audio`
 
 ### Design decisions worth knowing
+
+- **Scene narration re-recording is synchronous, and it writes.** Unlike every other
+  generation call here, `POST .../scenes/{id}/audio/mp3` does not queue: Author renders
+  the clip, re-times the scene, saves reel.json and returns the updated reel. So
+  `regenerate_scene_narration` must not be polled, and any reel document read before it
+  is stale — saving that copy afterwards would revert the new timings. The tool lifts
+  the returned reel out of the response so it arrives in `get_reel3_status` shape, ready
+  for `save_reel`.
+- **`get_reel_audio_status` is not its partner.** That endpoint tracks whole-reel audio
+  jobs (`POST .../audio/mp3`, started from the Turo UI) and answers "audio generation was
+  not found" for a reel whose scenes were re-recorded individually. Pairing the two was
+  the first thing the live check disproved.
+- **Reel scenes key off `scene_id`, not `id`,** and spoken text lives in `narration_text`.
+  Both tool descriptions name the real fields, because a model told to look for `id`
+  finds nothing and gives up.
 
 - **New chapters and concepts are placed last.** `display_order` defaults to 0 and neither
   create endpoint accepts it, so Turo puts new items first. The tools create and then

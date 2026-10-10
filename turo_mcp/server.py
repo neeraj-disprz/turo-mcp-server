@@ -16,7 +16,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .client import ArturoClient, headers_from, resolve_session_cookie
 from .config import Settings
-from .tools import discovery, pathway, reel3, simulation, simulation_edit
+from .tools import discovery, pathway, reel3, reel_edit, simulation, simulation_edit
 
 INSTRUCTIONS = """\
 Tools for authoring Turo learning content: editing pathways, generating Reel 3.0
@@ -40,9 +40,12 @@ Rules that matter:
   before passing confirm=true.
 - A hand-created concept has NO knowledge base (Turo derives KBs from the uploaded
   source document). Script generation fails without one — call `set_concept_kb` first.
-- Simulations can be edited after generation (save_simulation, and the image/audio
-  tools). Reels cannot — regenerate them instead. `save_simulation` replaces the
-  whole activity, so always `get_simulation` first and send the full object back.
+- Simulations and reels can both be edited after generation. Each save REPLACES the
+  whole document, so always read first and send the full object back: `get_simulation`
+  before `save_simulation`, `get_reel3_status` before `save_reel`.
+- Editing narration text never re-records audio. After changing spoken words in a
+  reel, call `regenerate_scene_narration` for that scene and poll
+  `get_reel_audio_status`, or the video keeps saying the old words.
 - This server cannot publish. That is done in the Turo UI.
 """
 
@@ -55,7 +58,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         cookie = resolve_session_cookie(headers_from(ctx), settings)
         return ArturoClient(settings, cookie)
 
-    for module in (discovery, pathway, reel3, simulation, simulation_edit):
+    for module in (discovery, pathway, reel3, reel_edit, simulation, simulation_edit):
         module.register(server, settings, client_for)
 
     return server
