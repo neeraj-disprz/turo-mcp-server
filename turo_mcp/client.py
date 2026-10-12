@@ -127,8 +127,15 @@ class ArturoClient:
         *,
         json: Any | None = None,
         params: Mapping[str, Any] | None = None,
+        data: Mapping[str, Any] | None = None,
+        files: Mapping[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:
+        """`data`/`files` send multipart instead of JSON.
+
+        The Reel 3.0 image endpoints are multipart-only — they read their fields
+        from request.FILES and the form, and ignore a JSON body entirely.
+        """
         url = f"{self._settings.base_url}{self._settings.api_prefix}{path}"
         headers = {
             "Accept": "application/json",
@@ -141,7 +148,13 @@ class ArturoClient:
                 timeout=timeout or self._settings.timeout_seconds
             ) as http:
                 response = await http.request(
-                    method, url, json=json, params=params, headers=headers
+                    method,
+                    url,
+                    json=json,
+                    params=params,
+                    data=data,
+                    files=files,
+                    headers=headers,
                 )
         except httpx.TimeoutException as exc:
             raise UpstreamUnavailable(

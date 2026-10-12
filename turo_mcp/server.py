@@ -16,7 +16,15 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .client import ArturoClient, headers_from, resolve_session_cookie
 from .config import Settings
-from .tools import discovery, pathway, reel3, reel_edit, simulation, simulation_edit
+from .tools import (
+    discovery,
+    pathway,
+    reel3,
+    reel_edit,
+    reel_image,
+    simulation,
+    simulation_edit,
+)
 
 INSTRUCTIONS = """\
 Tools for authoring Turo learning content: editing pathways, generating Reel 3.0
@@ -44,8 +52,12 @@ Rules that matter:
   whole document, so always read first and send the full object back: `get_simulation`
   before `save_simulation`, `get_reel3_status` before `save_reel`.
 - Editing narration text never re-records audio. After changing spoken words in a
-  reel, call `regenerate_scene_narration` for that scene and poll
-  `get_reel_audio_status`, or the video keeps saying the old words.
+  reel, call `regenerate_scene_narration` for that scene, or the video keeps saying
+  the old words. That call is synchronous — do not poll it.
+- To change a scene image, call `list_reel_images` first: the asset tokens it returns
+  exist nowhere in the reel document, and the image tools cannot be used without one.
+  `repair_scene_image` fixes a mostly-good image; `regenerate_scene_image` makes a new
+  one. Both replace the image irreversibly, so confirm with the user first.
 - This server cannot publish. That is done in the Turo UI.
 """
 
@@ -58,7 +70,15 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         cookie = resolve_session_cookie(headers_from(ctx), settings)
         return ArturoClient(settings, cookie)
 
-    for module in (discovery, pathway, reel3, reel_edit, simulation, simulation_edit):
+    for module in (
+        discovery,
+        pathway,
+        reel3,
+        reel_edit,
+        reel_image,
+        simulation,
+        simulation_edit,
+    ):
         module.register(server, settings, client_for)
 
     return server

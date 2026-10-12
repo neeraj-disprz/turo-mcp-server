@@ -11,7 +11,7 @@ pinned: false
 # Turo MCP Server
 
 MCP server over the Arturo API for **pathway editing**, **Reel 3.0 generation** and
-**Single-Turn Simulation generation and editing**. 28 tools. The specification this
+**Single-Turn Simulation generation and editing**. 32 tools. The specification this
 implements lives in the Arturo-API repo at `docs/turo-mcp-tools.md`.
 
 This is a standalone deployment copy — the server talks to Arturo over HTTP and needs
@@ -226,6 +226,8 @@ shell. Hostname and path change on every run.
 **Reel 3.0** — `get_concept_kb`, `set_concept_kb`, `generate_reel_script`, `get_reel_script`,
 `list_reel_voices`, `generate_reel3`, `get_reel3_status`
 **Reel 3.0 editing** — `save_reel`, `regenerate_scene_narration`, `get_reel_audio_status`
+**Reel 3.0 images** — `list_reel_images`, `get_scene_image_prompt`,
+`regenerate_scene_image`, `repair_scene_image`
 **Simulation** — `generate_simulation_script`, `generate_simulation`, `get_simulation`
 **Simulation editing** — `save_simulation`, `regenerate_simulation_image`,
 `replace_simulation_audio`, `get_simulation_audio`
@@ -243,6 +245,19 @@ shell. Hostname and path change on every run.
   jobs (`POST .../audio/mp3`, started from the Turo UI) and answers "audio generation was
   not found" for a reel whose scenes were re-recorded individually. Pairing the two was
   the first thing the live check disproved.
+- **Image asset tokens exist nowhere in the reel document.** The only trace of
+  `{{ASSET:SC001:A2}}` is an `ASSET_SC001_A2` fragment inside each image URL, and Author
+  rejects the unbraced form. `list_reel_images` derives them, which is why it is not
+  optional sugar — without it a model cannot address an image at all.
+- **Image transform returns the candidate as inline base64.** A 1536x1024 PNG is roughly
+  a megabyte of it, so the image tools decode and commit internally and return only
+  metadata plus the new URL. They also fold transform and accept into one call: there is
+  nowhere stateless to park a candidate between two tool calls, and regeneration is
+  non-deterministic, so a discarded preview cannot be recreated anyway.
+- **`ai_image_url` is required by Author on BOTH image calls** despite Arturo's layer
+  marking it optional. Omitting it on `accept` fails *after* the image is generated, so
+  the credits are already spent when the error appears. The tools always send it,
+  defaulting to the image being replaced.
 - **Reel scenes key off `scene_id`, not `id`,** and spoken text lives in `narration_text`.
   Both tool descriptions name the real fields, because a model told to look for `id`
   finds nothing and gives up.

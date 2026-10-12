@@ -26,6 +26,10 @@ EXPECTED_TOOLS = {
     "save_reel",
     "regenerate_scene_narration",
     "get_reel_audio_status",
+    "list_reel_images",
+    "get_scene_image_prompt",
+    "regenerate_scene_image",
+    "repair_scene_image",
     "generate_simulation_script",
     "generate_simulation",
     "get_simulation",
@@ -65,7 +69,16 @@ async def test_no_tool_accepts_a_credential_as_an_argument(tools):
         for param in tool.input_schema.get("properties") or {}
         if any(word in param.lower() for word in forbidden)
     }
-    assert offenders == {"set_session.cookie"}
+    # The image tools' `token` is an asset address like {{ASSET:SC001:A2}} — not
+    # a credential, and named to match what Author calls it in its own errors.
+    # Listing each exception by name keeps the guard meaningful: a new `cookie`,
+    # `password` or `api_token` parameter anywhere still fails this test.
+    assert offenders == {
+        "set_session.cookie",
+        "get_scene_image_prompt.token",
+        "regenerate_scene_image.token",
+        "repair_scene_image.token",
+    }
 
 
 async def test_every_tool_is_described(tools):
