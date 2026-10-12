@@ -9,6 +9,7 @@ voice. Values mirror Arturo-Web's ContentGenerationModal.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .config import Settings
@@ -117,6 +118,38 @@ def flatten_script(script: Any) -> str:
     return "\n\n".join(lines)
 
 
+_HEX_COLOR = re.compile(r"^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
+
+BRAND_COLOR_FIELDS = ("primary", "secondary", "on_primary")
+
+
+def normalise_brand_colors(
+    settings: Settings,
+    primary: str = "",
+    secondary: str = "",
+    on_primary: str = "",
+) -> dict[str, str]:
+    """Per-reel brand colours, falling back field by field to the configured ones.
+
+    Arturo *requires* all three on every generate call and never reads them from
+    the tenant record, so an unspecified colour has to come from somewhere —
+    which is why the fallback is per field rather than all-or-nothing.
+    """
+    supplied = {"primary": primary, "secondary": secondary, "on_primary": on_primary}
+    resolved: dict[str, str] = {}
+    for field in BRAND_COLOR_FIELDS:
+        value = (supplied[field] or "").strip()
+        if not value:
+            resolved[field] = settings.brand_colors[field]
+            continue
+        if not _HEX_COLOR.match(value):
+            raise InvalidArgument(
+                f"brand colour {field} must be a hex value like #E82028, got {value!r}"
+            )
+        resolved[field] = value if value.startswith("#") else f"#{value}"
+    return resolved
+
+
 def build_generate_payload(
     *,
     settings: Settings,
@@ -130,6 +163,7 @@ def build_generate_payload(
     creative_guidance: str | None = None,
     enable_voice_response: bool = False,
     enable_hand_raise: bool = False,
+    brand_colors: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     context = (culture_context or settings.culture_context).strip().lower()
     api_culture_context = CULTURE_CONTEXT_MAP.get(context, context)
@@ -175,6 +209,6 @@ def build_generate_payload(
             # as the web app does.
             "canvas": {"aspect_ratio": ratio},
             "default_safe_area_pc": 4,
-            "brand_colors": dict(settings.brand_colors),
+            "brand_colors": dict(brand_colors or settings.brand_colors),
         },
     }

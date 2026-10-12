@@ -245,6 +245,15 @@ shell. Hostname and path change on every run.
   jobs (`POST .../audio/mp3`, started from the Turo UI) and answers "audio generation was
   not found" for a reel whose scenes were re-recorded individually. Pairing the two was
   the first thing the live check disproved.
+- **Arturo never reads brand colours from the tenant record.** `reelSettings.brand_colors`
+  is *required* on every generate call and the generation path does no tenant lookup —
+  the only tenant-colour code attaches branding to the *status/playback* response. So a
+  reel generated without explicit colours is branded with whatever the server's
+  `REEL3_BRAND_*` config says, which on a multi-tenant deployment is the wrong company.
+  `generate_reel3` takes `brand_primary`/`brand_secondary`/`brand_on_primary` for this,
+  falling back per field. Resolving them automatically is not an option: `user-details`
+  returns no colours, and `tenants/get-by-id/` needs `configure_tenant_settings`, which a
+  content author does not have.
 - **Image asset tokens exist nowhere in the reel document.** The only trace of
   `{{ASSET:SC001:A2}}` is an `ASSET_SC001_A2` fragment inside each image URL, and Author
   rejects the unbraced form. `list_reel_images` derives them, which is why it is not

@@ -20,6 +20,7 @@ from ..reel3_defaults import (
     ASPECT_RATIO_TO_CANVAS,
     build_generate_payload,
     flatten_script,
+    normalise_brand_colors,
 )
 
 # Values the web app offers; the downstream service rejects anything else.
@@ -174,10 +175,15 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
     @server.tool(
         description=(
             "Queue Reel 3.0 generation for a concept. Supply the reviewed script and a "
-            "voice_id from list_reel_voices; art style, brand colours, canvas, language and "
-            "model are filled from server configuration. Takes 5-15 minutes — poll "
-            "get_reel3_status, do not block. Re-running regenerates from scratch and "
-            "overwrites the previous reel, so check get_reel3_status before retrying."
+            "voice_id from list_reel_voices; art style, canvas, language and model are "
+            "filled from server configuration. Set brand_primary / brand_secondary / "
+            "brand_on_primary (hex, e.g. #E82028) to brand the reel for the tenant — "
+            "Arturo does NOT read brand colours from the tenant record, so without them "
+            "the reel uses the server's configured defaults, which may be the wrong "
+            "company's colours. brand_on_primary is what sits ON the primary colour "
+            "(usually #FFFFFF or #000000), not a third brand colour. Takes 5-15 minutes "
+            "— poll get_reel3_status, do not block. Re-running regenerates from scratch "
+            "and overwrites the previous reel, so check get_reel3_status before retrying."
         )
     )
     async def generate_reel3(
@@ -193,6 +199,9 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
         creative_guidance: str = "",
         enable_voice_response: bool = False,
         enable_hand_raise: bool = False,
+        brand_primary: str = "",
+        brand_secondary: str = "",
+        brand_on_primary: str = "",
     ) -> dict[str, Any]:
         if not script.strip():
             raise MissingPrerequisite(
@@ -223,6 +232,9 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
             creative_guidance=creative_guidance or None,
             enable_voice_response=enable_voice_response,
             enable_hand_raise=enable_hand_raise,
+            brand_colors=normalise_brand_colors(
+                settings, brand_primary, brand_secondary, brand_on_primary
+            ),
         )
 
         client: ArturoClient = client_for(ctx)

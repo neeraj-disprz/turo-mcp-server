@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from turo_mcp.errors import InvalidArgument
-from turo_mcp.reel3_defaults import build_generate_payload
+from turo_mcp.reel3_defaults import build_generate_payload, normalise_brand_colors
 
 # REEL3_STRING_FIELDS — each must be a non-empty string or the API returns 400.
 REQUIRED_STRINGS = (
@@ -182,3 +182,54 @@ class TestScriptFlattening:
         from turo_mcp.reel3_defaults import flatten_script
 
         assert flatten_script("Already narration.") == "Already narration."
+
+
+class TestBrandColours:
+    """Arturo requires all three on every generate and never reads them from the
+    tenant record, so the payload must always carry a complete set."""
+
+    def test_configured_colours_are_used_when_none_are_given(self, settings):
+        payload = build_generate_payload(
+            settings=settings, reel_title="T", script="S", voice_id="v"
+        )
+        assert payload["reelSettings"]["brand_colors"] == {
+            "primary": "#E82028",
+            "secondary": "#26C6FF",
+            "on_primary": "#FFFFFF",
+        }
+
+    def test_supplied_colours_override_the_configured_ones(self, settings):
+        payload = build_generate_payload(
+            settings=settings,
+            reel_title="T",
+            script="S",
+            voice_id="v",
+            brand_colors=normalise_brand_colors(settings, "#101010", "#202020", "#303030"),
+        )
+        assert payload["reelSettings"]["brand_colors"] == {
+            "primary": "#101010",
+            "secondary": "#202020",
+            "on_primary": "#303030",
+        }
+
+    def test_each_field_falls_back_on_its_own(self, settings):
+        # Partial branding is the common case: a tenant colour for primary, the
+        # usual white for text on it.
+        resolved = normalise_brand_colors(settings, primary="#123456")
+        assert resolved == {
+            "primary": "#123456",
+            "secondary": "#26C6FF",
+            "on_primary": "#FFFFFF",
+        }
+
+    def test_a_missing_hash_is_added(self, settings):
+        assert normalise_brand_colors(settings, primary="123456")["primary"] == "#123456"
+
+    def test_shorthand_hex_is_accepted(self, settings):
+        assert normalise_brand_colors(settings, primary="#abc")["primary"] == "#abc"
+
+    @pytest.mark.parametrize("bad", ["red", "#12345", "#GGGGGG", "rgb(1,2,3)"])
+    def test_a_non_hex_colour_is_refused(self, settings, bad):
+        with pytest.raises(InvalidArgument) as exc:
+            normalise_brand_colors(settings, primary=bad)
+        assert "hex" in str(exc.value)
