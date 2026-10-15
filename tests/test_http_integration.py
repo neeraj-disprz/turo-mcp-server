@@ -153,7 +153,7 @@ async def test_the_full_tool_surface_is_advertised_over_http(live):
         listed = await session.list_tools()
 
     names = {tool.name for tool in listed.tools}
-    assert len(names) == 32
+    assert len(names) == 33
     assert {"whoami", "generate_reel3", "generate_simulation"} <= names
 
 

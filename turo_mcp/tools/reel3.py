@@ -162,6 +162,52 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
 
     @server.tool(
         description=(
+            "Save an edited Reel 3.0 script back to the concept. Pass overall_scenes "
+            "exactly as get_reel_script returned it under `script`, with your edits "
+            "applied — it REPLACES the stored script, so send every scene, not just the "
+            "changed ones. Do this before generate_reel3 if you edited the script: "
+            "generate_reel3 reads the text you hand it, so an unsaved edit would produce "
+            "a reel that no longer matches what is stored against the concept."
+        )
+    )
+    async def save_reel_script(
+        ctx: Context, learning_pitstop_id: str, overall_scenes: Any
+    ) -> dict[str, Any]:
+        # get_reel_script hands back {"overall_scenes": [...]}; accept either that
+        # envelope or the bare list rather than making the caller reshape it.
+        if isinstance(overall_scenes, dict) and "overall_scenes" in overall_scenes:
+            overall_scenes = overall_scenes["overall_scenes"]
+        if not overall_scenes:
+            raise InvalidArgument(
+                "overall_scenes is empty. Call get_reel_script and pass back its "
+                "script.overall_scenes with your edits applied — this replaces the whole "
+                "script, so a partial list would delete the rest."
+            )
+
+        client: ArturoClient = client_for(ctx)
+        # No trailing slash on this route, unlike its neighbours. Django's
+        # APPEND_SLASH turns a POST to the slashed form into a redirect that
+        # drops the body.
+        result = await client.request(
+            "POST",
+            "/kb/script/content/update",
+            json={
+                "learning_pitstop_id": learning_pitstop_id,
+                "overall_scenes": overall_scenes,
+            },
+        )
+        return {
+            "saved": True,
+            "learning_pitstop_id": learning_pitstop_id,
+            "scenes": len(overall_scenes) if isinstance(overall_scenes, list) else None,
+            "response": result,
+            "next": (
+                "Re-read with get_reel_script and pass its script_text to generate_reel3."
+            ),
+        }
+
+    @server.tool(
+        description=(
             "List the voices available for Reel 3.0, with preview URLs. The id returned "
             "here is the only acceptable voice_id for generate_reel3 — legacy aliases like "
             "'en-us-m-adam' are rejected by the Author service."
@@ -175,7 +221,12 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
     @server.tool(
         description=(
             "Queue Reel 3.0 generation for a concept. Supply the reviewed script and a "
-            "voice_id from list_reel_voices; art style, canvas, language and model are "
+            "voice_id from list_reel_voices. Pass kb_content with the knowledge base the "
+            "script was written from — the reel renders from the script, but a concept "
+            "left without a KB cannot have its script regenerated later and breaks script "
+            "generation for the pathway. Omit it only when the concept already has the "
+            "right KB stored (check with get_concept_kb). Art style, canvas, language and "
+            "model are "
             "filled from server configuration. Set brand_primary / brand_secondary / "
             "brand_on_primary (hex, e.g. #E82028) to brand the reel for the tenant — "
             "Arturo does NOT read brand colours from the tenant record, so without them "
@@ -192,6 +243,7 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
         reel_title: str,
         script: str,
         voice_id: str,
+        kb_content: str = "",
         culture_context: str = "",
         art_style: str = "",
         aspect_ratio: str = "16:9",
@@ -238,12 +290,31 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
         )
 
         client: ArturoClient = client_for(ctx)
+
+        # Push the knowledge base before queuing, not after. The reel itself is
+        # built from the script, but a concept whose KB is missing or stale has
+        # nothing to regenerate a script from later, and script generation for
+        # any sibling concept fails outright. Doing it first also means a bad KB
+        # fails cheaply instead of after a 15-minute render.
+        kb_saved = False
+        if kb_content.strip():
+            await client.request(
+                "POST",
+                "/kb/text/update/",
+                json={
+                    "learning_pitstop_id": learning_pitstop_id,
+                    "text_content": kb_content,
+                },
+            )
+            kb_saved = True
+
         result = await client.request(
             "POST", f"/reels/{learning_pitstop_id}/generate", json=payload
         )
         return {
             "queued": True,
             "reel_id": learning_pitstop_id,
+            "kb_saved": kb_saved,
             "response": result,
             "next": "Poll get_reel3_status every 10-15 seconds. Typical run: 5-15 minutes.",
         }

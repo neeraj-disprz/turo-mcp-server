@@ -11,7 +11,7 @@ pinned: false
 # Turo MCP Server
 
 MCP server over the Arturo API for **pathway editing**, **Reel 3.0 generation** and
-**Single-Turn Simulation generation and editing**. 32 tools. The specification this
+**Single-Turn Simulation generation and editing**. 33 tools. The specification this
 implements lives in the Arturo-API repo at `docs/turo-mcp-tools.md`.
 
 This is a standalone deployment copy — the server talks to Arturo over HTTP and needs
@@ -224,7 +224,7 @@ shell. Hostname and path change on every run.
 **Pathway editing** — `create_chapter`, `update_chapter`, `delete_chapters`,
 `create_concept`, `update_concept`, `delete_concepts`, `reorder_pathway`
 **Reel 3.0** — `get_concept_kb`, `set_concept_kb`, `generate_reel_script`, `get_reel_script`,
-`list_reel_voices`, `generate_reel3`, `get_reel3_status`
+`save_reel_script`, `save_reel_script`, `list_reel_voices`, `generate_reel3`, `get_reel3_status`
 **Reel 3.0 editing** — `save_reel`, `regenerate_scene_narration`, `get_reel_audio_status`
 **Reel 3.0 images** — `list_reel_images`, `get_scene_image_prompt`,
 `regenerate_scene_image`, `repair_scene_image`

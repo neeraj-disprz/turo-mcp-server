@@ -6,7 +6,7 @@ import httpx
 import json
 import respx
 
-from .conftest import API, call, call_expecting_error
+from .conftest import API, body_of, call, call_expecting_error
 
 
 class TestScriptGeneration:
@@ -278,3 +278,111 @@ class TestScriptHandoff:
         sent = json.loads(route.calls[0].request.read())["script"]
         assert sent == "[warm] Hello."
         assert not sent.startswith("{")
+
+
+class TestSaveReelScript:
+    @respx.mock
+    async def test_the_edited_scenes_are_posted_to_the_update_route(self, server):
+        route = respx.post(f"{API}/kb/script/content/update").mock(
+            return_value=httpx.Response(200, json={"status": "updated"})
+        )
+        scenes = [{"narration": "One."}, {"narration": "Two."}]
+
+        result = await call(
+            server, "save_reel_script", learning_pitstop_id="c1", overall_scenes=scenes
+        )
+
+        assert body_of(route) == {"learning_pitstop_id": "c1", "overall_scenes": scenes}
+        assert result["saved"] is True
+        assert result["scenes"] == 2
+
+    @respx.mock
+    async def test_the_get_reel_script_envelope_is_unwrapped(self, server):
+        # get_reel_script returns {"overall_scenes": [...]} under `script`; passing
+        # that straight back must work without the caller reshaping it.
+        route = respx.post(f"{API}/kb/script/content/update").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        await call(
+            server,
+            "save_reel_script",
+            learning_pitstop_id="c1",
+            overall_scenes={"overall_scenes": [{"narration": "One."}]},
+        )
+        assert body_of(route)["overall_scenes"] == [{"narration": "One."}]
+
+    async def test_an_empty_script_is_refused(self, server):
+        message = await call_expecting_error(
+            server, "save_reel_script", learning_pitstop_id="c1", overall_scenes=[]
+        )
+        assert "empty" in message and "get_reel_script" in message
+
+
+class TestGenerateReelPushesKb:
+    """The reel renders from the script, but the concept must still carry the KB:
+    without it nothing can regenerate a script later."""
+
+    @respx.mock
+    async def test_the_kb_is_pushed_before_generation_is_queued(self, server):
+        kb = respx.post(f"{API}/kb/text/update/").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        gen = respx.post(f"{API}/reels/c1/generate").mock(
+            return_value=httpx.Response(200, json={"queued": True})
+        )
+
+        result = await call(
+            server,
+            "generate_reel3",
+            learning_pitstop_id="c1",
+            reel_title="T",
+            script="Narration.",
+            voice_id="v1",
+            kb_content="The knowledge base text.",
+        )
+
+        assert body_of(kb) == {
+            "learning_pitstop_id": "c1",
+            "text_content": "The knowledge base text.",
+        }
+        assert result["kb_saved"] is True
+        assert kb.calls[0].request.headers  # sanity
+        # Ordering matters: a bad KB must fail before a 15-minute render starts.
+        assert kb.called and gen.called
+
+    @respx.mock
+    async def test_a_failed_kb_push_stops_generation(self, server):
+        respx.post(f"{API}/kb/text/update/").mock(
+            return_value=httpx.Response(400, json={"message": "bad kb"})
+        )
+        gen = respx.post(f"{API}/reels/c1/generate").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        await call_expecting_error(
+            server,
+            "generate_reel3",
+            learning_pitstop_id="c1",
+            reel_title="T",
+            script="Narration.",
+            voice_id="v1",
+            kb_content="bad",
+        )
+        assert not gen.called, "generation must not be queued when the KB push failed"
+
+    @respx.mock
+    async def test_omitting_the_kb_leaves_the_stored_one_untouched(self, server):
+        kb = respx.post(f"{API}/kb/text/update/").mock(return_value=httpx.Response(200, json={}))
+        respx.post(f"{API}/reels/c1/generate").mock(return_value=httpx.Response(200, json={}))
+
+        result = await call(
+            server,
+            "generate_reel3",
+            learning_pitstop_id="c1",
+            reel_title="T",
+            script="Narration.",
+            voice_id="v1",
+        )
+
+        assert not kb.called, "an empty kb_content must not blank the stored KB"
+        assert result["kb_saved"] is False
