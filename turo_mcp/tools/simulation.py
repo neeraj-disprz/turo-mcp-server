@@ -16,6 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from ..blob import resolve_blob_location
 from ..client import ArturoClient
 from ..config import Settings
+from ..kb import push_concept_kb
 from ..errors import InvalidArgument, MissingPrerequisite
 
 # Narrator voice must differ from both character voices.
@@ -38,9 +39,13 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
             "Generate a single-turn simulation script: scene, two characters, a four-turn "
             "dialogue and a hint question. Pass learning_pitstop_id to build it from an "
             "existing concept and its knowledge base, or module_name + module_info to "
-            "create a standalone simulation with no pathway. Returns unique_id, which "
-            "every later step needs. Review the scene and dialogue with the user before "
-            "calling generate_simulation."
+            "create a standalone simulation with no pathway. Review the scene and dialogue "
+            "with the user before calling generate_simulation. SKIP this when you already "
+            "have the script and the concept is in a pathway — generate_simulation accepts "
+            "a script directly and unique_id is just the learning_pitstop_id, so calling "
+            "this only to replace its output wastes a generation and grounds the draft in "
+            "whatever knowledge base happens to be stored. It is only REQUIRED for a "
+            "standalone simulation, where it mints the unique_id."
         )
     )
     async def generate_simulation_script(
@@ -72,11 +77,17 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
 
     @server.tool(
         description=(
-            "Render an approved simulation script into the playable activity (audio, "
-            "images, guidelines, scoring rubric). Pass unique_id and the script object "
-            "returned by generate_simulation_script. Voices are chosen automatically from "
-            "the characters' genders unless you override them. Returns blob_location — "
-            "use that to poll get_simulation. Takes 2-5 minutes."
+            "Render a simulation script into the playable activity (audio, images, "
+            "guidelines, scoring rubric). For a concept in a pathway, unique_id is simply "
+            "its learning_pitstop_id — you do NOT have to call generate_simulation_script "
+            "first if you already have the script. Pass your own script object with the "
+            "same shape (scene, dialogue, and gender_a/gender_b so voices can be picked). "
+            "Pass kb_content with the source material the script came from: the render "
+            "ignores it, but a concept with no knowledge base cannot have a script "
+            "regenerated later and the UI will offer to generate one, which overwrites "
+            "authored content. Voices are chosen automatically from the characters' "
+            "genders unless you override them. Returns blob_location — use that to poll "
+            "get_simulation. Takes 2-5 minutes."
         )
     )
     async def generate_simulation(
@@ -85,6 +96,7 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
         script: dict[str, Any],
         module_name: str,
         module_info: str,
+        kb_content: str = "",
         lang: str = "en-us",
         cult_context: str = "en-us",
         voice_a: str = "",
@@ -111,6 +123,17 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
                 raise InvalidArgument(f"{field} must be one of: {', '.join(_VOICES)}")
 
         client: ArturoClient = client_for(ctx)
+
+        # Store the source material on the concept before rendering. The render
+        # itself never reads the KB — it works from blob_id and the script you
+        # pass — but a concept left without one cannot have a script regenerated
+        # later, and the UI will offer to "generate" a KB that then overwrites
+        # whatever the author wrote. Pushing first also fails cheaply.
+        kb_saved = False
+        if kb_content.strip():
+            await push_concept_kb(client, unique_id, kb_content)
+            kb_saved = True
+
         result = await client.request(
             "POST",
             "/active-learning/assessment-generation/",
@@ -127,6 +150,7 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
         return {
             "queued": True,
             "blob_location": (result or {}).get("blob_location", unique_id),
+            "kb_saved": kb_saved,
             "voices": chosen,
             "response": result,
             "next": "Poll get_simulation every 10-15 seconds. Typical run: 2-5 minutes.",

@@ -16,6 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from ..client import ArturoClient, unwrap
 from ..config import Settings
 from ..errors import InvalidArgument, MissingPrerequisite
+from ..kb import push_concept_kb
 from ..reel3_defaults import (
     ASPECT_RATIO_TO_CANVAS,
     build_generate_payload,
@@ -69,14 +70,7 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
                 "this concept."
             )
         client: ArturoClient = client_for(ctx)
-        result = await client.request(
-            "POST",
-            "/kb/text/update/",
-            json={
-                "learning_pitstop_id": learning_pitstop_id,
-                "text_content": kb_content,
-            },
-        )
+        result = await push_concept_kb(client, learning_pitstop_id, kb_content)
         return {
             **(result or {}),
             "next": "Knowledge base saved. generate_reel_script / generate_simulation_script can now run.",
@@ -298,14 +292,7 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
         # fails cheaply instead of after a 15-minute render.
         kb_saved = False
         if kb_content.strip():
-            await client.request(
-                "POST",
-                "/kb/text/update/",
-                json={
-                    "learning_pitstop_id": learning_pitstop_id,
-                    "text_content": kb_content,
-                },
-            )
+            await push_concept_kb(client, learning_pitstop_id, kb_content)
             kb_saved = True
 
         result = await client.request(

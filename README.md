@@ -245,6 +245,26 @@ shell. Hostname and path change on every run.
   jobs (`POST .../audio/mp3`, started from the Turo UI) and answers "audio generation was
   not found" for a reel whose scenes were re-recorded individually. Pairing the two was
   the first thing the live check disproved.
+- **Writing a KB does not mark the concept as having one.** `/kb/text/update/` sets
+  `kb_url` and saves, but never `is_knowledge_base_generated` — only Arturo's own
+  generation paths do, and no endpoint exposes it. The authoring UI gates purely on that
+  flag (`CustomActionButton.jsx`, which never looks at `kb_url`), so a concept with a
+  perfectly good authored KB still shows "0/3 — Generate knowledge base". Accepting that
+  prompt runs the real generation and repoints `kb_url` at new content, destroying what
+  was written. **No MCP tool can prevent this; the fix is one line in Arturo-API.**
+- **Every KB write wraps the text in a document header** (heading, pitstop id, original
+  pitstop, description, timestamp) and `get_concept_kb` returns that wrapper as part of
+  the content. So read-change-write nests a fresh layer per pass, ~350 characters each
+  time — measured live at 50,724 → 51,071 → 51,418. `push_concept_kb` strips every layer
+  before writing so a push stores exactly one however many it arrived with. Note the
+  header is BLANK-LINE separated, which puts `Updated:` around line 8; a scan window
+  sized for consecutive lines silently fails to match.
+- **A simulation does not need its script generated first.** For a pathway concept
+  `unique_id` is just the `learning_pitstop_id` (verified: the status endpoint accepts it
+  raw), `generate_simulation` takes the script inline, and the render never reads the KB.
+  `generate_simulation_script` is only *required* for standalone simulations, where it
+  mints the uuid. Calling it just to overwrite its output wastes a generation and grounds
+  the draft in whatever KB happens to be stored.
 - **Arturo never reads brand colours from the tenant record.** `reelSettings.brand_colors`
   is *required* on every generate call and the generation path does no tenant lookup —
   the only tenant-colour code attaches branding to the *status/playback* response. So a

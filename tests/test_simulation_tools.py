@@ -9,7 +9,7 @@ import respx
 
 from turo_mcp.tools.simulation import _pick_voices
 
-from .conftest import API, call, call_expecting_error
+from .conftest import API, body_of, call, call_expecting_error
 
 SCRIPT = {
     "scene": "A manager and an employee discuss a missed deadline.",
@@ -189,3 +189,73 @@ class TestStatus:
         result = await call(server, "get_simulation", blob_location="u1")
         assert result["status"] == "failed"
         assert "generate_simulation" in result["hint"]
+
+
+class TestSimulationKbPush:
+    """A simulation rendered without a KB leaves the concept empty, and the UI
+    then offers to generate one — which overwrites authored content."""
+
+    @respx.mock
+    async def test_the_kb_is_pushed_before_the_render_is_queued(self, server):
+        kb = respx.post(f"{API}/kb/text/update/").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        gen = respx.post(f"{API}/active-learning/assessment-generation/").mock(
+            return_value=httpx.Response(200, json={"blob_location": "b1"})
+        )
+
+        result = await call(
+            server,
+            "generate_simulation",
+            unique_id="b1",
+            script={"scene": "A store.", "dialogue": [{"a": "Hi"}], "gender_a": "male", "gender_b": "female"},
+            module_name="M",
+            module_info="I",
+            kb_content="The real Rivoli scenario.",
+        )
+
+        assert body_of(kb) == {
+            "learning_pitstop_id": "b1",
+            "text_content": "The real Rivoli scenario.",
+        }
+        assert result["kb_saved"] is True
+        assert gen.called
+
+    @respx.mock
+    async def test_a_failed_kb_push_stops_the_render(self, server):
+        respx.post(f"{API}/kb/text/update/").mock(
+            return_value=httpx.Response(400, json={"message": "bad kb"})
+        )
+        gen = respx.post(f"{API}/active-learning/assessment-generation/").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        await call_expecting_error(
+            server,
+            "generate_simulation",
+            unique_id="b1",
+            script={"scene": "S", "dialogue": [{"a": "Hi"}], "gender_a": "male", "gender_b": "female"},
+            module_name="M",
+            module_info="I",
+            kb_content="bad",
+        )
+        assert not gen.called, "rendering must not start when the KB push failed"
+
+    @respx.mock
+    async def test_omitting_the_kb_leaves_the_stored_one_untouched(self, server):
+        kb = respx.post(f"{API}/kb/text/update/").mock(return_value=httpx.Response(200, json={}))
+        respx.post(f"{API}/active-learning/assessment-generation/").mock(
+            return_value=httpx.Response(200, json={"blob_location": "b1"})
+        )
+
+        result = await call(
+            server,
+            "generate_simulation",
+            unique_id="b1",
+            script={"scene": "S", "dialogue": [{"a": "Hi"}], "gender_a": "male", "gender_b": "female"},
+            module_name="M",
+            module_info="I",
+        )
+
+        assert not kb.called
+        assert result["kb_saved"] is False
