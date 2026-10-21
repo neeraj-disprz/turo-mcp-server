@@ -76,6 +76,18 @@ async def _ensure_registered(
             timeout=settings.long_timeout_seconds,
         )
     except RequestRejected as exc:
+        # Registration goes through the script endpoint, which forwards the
+        # concept's KB to the content service — and that service rejects an empty
+        # one with a 422 naming the field. So an unregistered concept with no KB
+        # cannot be rendered at all, and the raw upstream error says nothing the
+        # model can act on.
+        if "knowledge_base" in str(exc):
+            raise MissingPrerequisite(
+                f"Concept {unique_id} has no knowledge base, and Arturo cannot register "
+                "an activity without one. Pass kb_content to this call — it stores the KB "
+                "and registers in one shot. (The render itself does not use the KB; "
+                "registration does.)"
+            ) from exc
         raise MissingPrerequisite(
             f"Arturo has no activity registered for {unique_id} and registering one "
             f"failed: {exc}. For a concept in a pathway, unique_id must be its "
@@ -134,10 +146,12 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
             "itself when needed, which is reported as activity_registered. Pass your own "
             "script object with the "
             "same shape (scene, dialogue, and gender_a/gender_b so voices can be picked). "
-            "Pass kb_content with the source material the script came from: the render "
-            "ignores it, but a concept with no knowledge base cannot have a script "
-            "regenerated later and the UI will offer to generate one, which overwrites "
-            "authored content. Voices are chosen automatically from the characters' "
+            "Pass kb_content with the source material the script came from. It is "
+            "optional ONLY for a concept that already has a knowledge base: the render "
+            "ignores the KB, but registering the activity does not, so a concept with no "
+            "KB at all cannot be rendered. It also means a concept left without one "
+            "cannot have a script regenerated later, and the UI will offer to generate "
+            "one, which overwrites authored content. Voices are chosen automatically from the characters' "
             "genders unless you override them. Returns blob_location — use that to poll "
             "get_simulation. Takes 2-5 minutes."
         )

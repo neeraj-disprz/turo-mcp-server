@@ -284,6 +284,14 @@ shell. Hostname and path change on every run.
   `generate_simulation_script`). Registering is deliberately done *after* the KB push,
   because row creation copies the concept's `kb_url` onto the activity.
   **The Arturo-side fix is to `get_or_create` that row in `assessment_generation`.**
+- **Which makes a knowledge base mandatory for the *first* render, though the render
+  never reads it.** Registration goes through the script endpoint, which forwards the
+  concept's KB to the content service, and that service 422s an empty one
+  (`{"loc":["body","knowledge_base"],"msg":"Field required"}` — verified live on a fresh
+  concept). So `kb_content` is optional only where a KB already exists or the activity is
+  already registered; a hand-made concept with no KB cannot have a simulation generated
+  from a script alone. `_ensure_registered` detects that specific 422 and says so, rather
+  than passing up an upstream error about a field the caller never sent.
 - **Arturo never reads brand colours from the tenant record.** `reelSettings.brand_colors`
   is *required* on every generate call and the generation path does no tenant lookup —
   the only tenant-colour code attaches branding to the *status/playback* response. So a

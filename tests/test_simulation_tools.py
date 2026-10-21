@@ -264,6 +264,39 @@ class TestActivityRegistration:
         )
 
     @respx.mock
+    async def test_a_concept_with_no_kb_is_told_to_pass_one(self, server):
+        # Registration forwards the concept's KB to the content service, which
+        # rejects an empty one with a 422 naming the field. Verified live: a
+        # fresh concept with no KB cannot be rendered at all, and the raw
+        # upstream error gives the model nothing to act on.
+        not_registered()
+        respx.post(SCRIPT_STEP).mock(
+            return_value=httpx.Response(
+                500,
+                json={
+                    "error": "Assessment script generation failed",
+                    "response_text": '{"detail":[{"type":"missing","loc":["body","knowledge_base"],"msg":"Field required"}]}',
+                },
+            )
+        )
+        gen = respx.post(f"{API}/active-learning/assessment-generation/").mock(
+            return_value=httpx.Response(202, json={})
+        )
+
+        message = await call_expecting_error(
+            server,
+            "generate_simulation",
+            unique_id="c1",
+            script=SCRIPT,
+            module_name="M",
+            module_info="I",
+        )
+
+        assert "kb_content" in message
+        assert "no knowledge base" in message
+        assert not gen.called
+
+    @respx.mock
     async def test_an_unexpected_probe_failure_is_not_mistaken_for_unregistered(self, server):
         respx.post(STATUS).mock(return_value=httpx.Response(500, json={"error": "boom"}))
         step = respx.post(SCRIPT_STEP)
