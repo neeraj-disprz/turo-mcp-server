@@ -21,6 +21,23 @@ SCRIPT = {
     "name_b": "Priya",
 }
 
+STATUS = f"{API}/active-learning/get-assessment-status/"
+SCRIPT_STEP = f"{API}/active-learning/generate-script/"
+
+
+def already_registered():
+    """Arturo answers the status probe, so no registration is needed."""
+    return respx.post(STATUS).mock(
+        return_value=httpx.Response(200, json={"status": "completed"})
+    )
+
+
+def not_registered():
+    """Arturo has no activity row for this id yet."""
+    return respx.post(STATUS).mock(
+        return_value=httpx.Response(404, json={"error": "Activity not found"})
+    )
+
 
 class TestVoiceAssignment:
     def test_voices_follow_character_gender(self):
@@ -81,6 +98,7 @@ class TestScriptGeneration:
 class TestGeneration:
     @respx.mock
     async def test_generation_assigns_voices_and_returns_the_poll_handle(self, server):
+        already_registered()
         route = respx.post(f"{API}/active-learning/assessment-generation/").mock(
             return_value=httpx.Response(202, json={"blob_location": "u1-en-us"})
         )
@@ -102,6 +120,7 @@ class TestGeneration:
 
     @respx.mock
     async def test_explicit_voices_override_the_automatic_choice(self, server):
+        already_registered()
         route = respx.post(f"{API}/active-learning/assessment-generation/").mock(
             return_value=httpx.Response(202, json={})
         )
@@ -139,6 +158,125 @@ class TestGeneration:
         )
         assert "dialogue" in message
         assert "generate_simulation_script" in message
+
+
+class TestActivityRegistration:
+    """Arturo creates the activity row only inside the script step, and its render
+    endpoint guards every database write behind `if activity:`. Rendering an
+    unregistered concept therefore succeeds, writes the blob, and leaves an
+    activity that answers "Activity not found" to every later read. Observed
+    live: a hand-written script rendered fine and was permanently unreachable,
+    while the same concept via the script step worked.
+    """
+
+    @respx.mock
+    async def test_an_unregistered_concept_is_registered_before_rendering(self, server):
+        not_registered()
+        step = respx.post(SCRIPT_STEP).mock(
+            return_value=httpx.Response(200, json={"unique_id": "c1"})
+        )
+        gen = respx.post(f"{API}/active-learning/assessment-generation/").mock(
+            return_value=httpx.Response(202, json={"blob_location": "c1"})
+        )
+
+        result = await call(
+            server,
+            "generate_simulation",
+            unique_id="c1",
+            script=SCRIPT,
+            module_name="M",
+            module_info="I",
+        )
+
+        assert json.loads(step.calls[0].request.read()) == {"learning_pitstop_id": "c1"}
+        assert gen.called, "the render must still happen after registering"
+        assert result["activity_registered"] is True
+
+    @respx.mock
+    async def test_an_already_registered_concept_skips_the_wasted_generation(self, server):
+        already_registered()
+        step = respx.post(SCRIPT_STEP)
+        respx.post(f"{API}/active-learning/assessment-generation/").mock(
+            return_value=httpx.Response(202, json={})
+        )
+
+        result = await call(
+            server,
+            "generate_simulation",
+            unique_id="c1",
+            script=SCRIPT,
+            module_name="M",
+            module_info="I",
+        )
+
+        assert not step.called, "re-running must not burn a script generation"
+        assert result["activity_registered"] is False
+
+    @respx.mock
+    async def test_registration_happens_after_the_kb_push(self, server):
+        # Registration copies the concept's kb_url onto the activity row, so the
+        # KB has to be stored first or the row points at the old one.
+        calls: list[str] = []
+        respx.post(f"{API}/kb/text/update/").mock(
+            side_effect=lambda request: calls.append("kb") or httpx.Response(200, json={})
+        )
+        not_registered()
+        respx.post(SCRIPT_STEP).mock(
+            side_effect=lambda request: calls.append("register") or httpx.Response(200, json={})
+        )
+        respx.post(f"{API}/active-learning/assessment-generation/").mock(
+            side_effect=lambda request: calls.append("render") or httpx.Response(202, json={})
+        )
+
+        await call(
+            server,
+            "generate_simulation",
+            unique_id="c1",
+            script=SCRIPT,
+            module_name="M",
+            module_info="I",
+            kb_content="The source material.",
+        )
+        assert calls == ["kb", "register", "render"]
+
+    @respx.mock
+    async def test_a_failed_registration_stops_the_render_and_explains_itself(self, server):
+        not_registered()
+        respx.post(SCRIPT_STEP).mock(
+            return_value=httpx.Response(404, json={"error": "Learning pitstop not found"})
+        )
+        gen = respx.post(f"{API}/active-learning/assessment-generation/").mock(
+            return_value=httpx.Response(202, json={})
+        )
+
+        message = await call_expecting_error(
+            server,
+            "generate_simulation",
+            unique_id="nope",
+            script=SCRIPT,
+            module_name="M",
+            module_info="I",
+        )
+
+        assert "learning_pitstop_id" in message
+        assert not gen.called, (
+            "rendering unregistered produces content that can never be read back"
+        )
+
+    @respx.mock
+    async def test_an_unexpected_probe_failure_is_not_mistaken_for_unregistered(self, server):
+        respx.post(STATUS).mock(return_value=httpx.Response(500, json={"error": "boom"}))
+        step = respx.post(SCRIPT_STEP)
+
+        await call_expecting_error(
+            server,
+            "generate_simulation",
+            unique_id="c1",
+            script=SCRIPT,
+            module_name="M",
+            module_info="I",
+        )
+        assert not step.called
 
 
 class TestStatus:
@@ -197,6 +335,7 @@ class TestSimulationKbPush:
 
     @respx.mock
     async def test_the_kb_is_pushed_before_the_render_is_queued(self, server):
+        already_registered()
         kb = respx.post(f"{API}/kb/text/update/").mock(
             return_value=httpx.Response(200, json={"success": True})
         )
@@ -243,6 +382,7 @@ class TestSimulationKbPush:
 
     @respx.mock
     async def test_omitting_the_kb_leaves_the_stored_one_untouched(self, server):
+        already_registered()
         kb = respx.post(f"{API}/kb/text/update/").mock(return_value=httpx.Response(200, json={}))
         respx.post(f"{API}/active-learning/assessment-generation/").mock(
             return_value=httpx.Response(200, json={"blob_location": "b1"})

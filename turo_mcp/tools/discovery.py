@@ -8,7 +8,7 @@ from mcp.server.mcpserver import Context, MCPServer
 
 from ..client import ArturoClient, set_runtime_session, unwrap
 from ..config import Settings
-from ..errors import InvalidArgument
+from ..errors import InvalidArgument, SessionExpired
 
 
 def _add_pathway_urls(body: Any, settings: Settings) -> None:
@@ -46,7 +46,15 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
             raise InvalidArgument("cookie must not be empty")
         # Verify before storing, so a dud cookie fails here rather than being
         # cached and failing every later tool with the same recovery message.
-        body = await ArturoClient(settings, value).request("GET", "/auth/user-details/")
+        try:
+            body = await ArturoClient(settings, value).request("GET", "/auth/user-details/")
+        except SessionExpired:
+            # Arturo intermittently 401s a session that is in fact live — seen as
+            # a rejection immediately followed by the identical cookie being
+            # accepted. A cookie that has really expired fails the retry too, so
+            # retrying once costs nothing and stops a good cookie from being
+            # refused (and the user from being asked for one they already gave).
+            body = await ArturoClient(settings, value).request("GET", "/auth/user-details/")
         set_runtime_session(value)
         return {"stored": True, "user": unwrap(body, "user")}
 

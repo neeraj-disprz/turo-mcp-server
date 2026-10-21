@@ -259,12 +259,31 @@ shell. Hostname and path change on every run.
   before writing so a push stores exactly one however many it arrived with. Note the
   header is BLANK-LINE separated, which puts `Updated:` around line 8; a scan window
   sized for consecutive lines silently fails to match.
-- **A simulation does not need its script generated first.** For a pathway concept
-  `unique_id` is just the `learning_pitstop_id` (verified: the status endpoint accepts it
-  raw), `generate_simulation` takes the script inline, and the render never reads the KB.
-  `generate_simulation_script` is only *required* for standalone simulations, where it
-  mints the uuid. Calling it just to overwrite its output wastes a generation and grounds
-  the draft in whatever KB happens to be stored.
+- **A rejected session cookie is not proof the cookie is dead.** Arturo intermittently
+  401s a session that is in fact live — observed as `set_session` refusing a cookie and
+  accepting the identical one on the retry immediately after. `set_session` retries its
+  verification once, because a cookie that has genuinely expired fails the retry too,
+  while refusing a good one makes the model ask the user for a cookie they already gave.
+- **A simulation does not need its script generated first, but it does need the concept
+  registered.** For a pathway concept `unique_id` is just the `learning_pitstop_id`,
+  `generate_simulation` takes the script inline, and the render never reads the KB — so
+  the script step looks skippable. It is not, quite: Arturo creates the
+  `ActiveLearningActivity` row *only* inside `generate_assessment_script`
+  (`assessment_views.py:306`), and `assessment_generation` looks that row up with
+  `filter(...).first()` and wraps **every** database write behind `if activity:`
+  (`:471`, and again in the background task at `:357`). With no row the render still
+  runs, still writes the blob, still returns 202, and still flips the *pitstop's*
+  `is_content_generated` to `completed` — but no status, no language mapping and no
+  completion is ever recorded, so the activity answers "Activity not found" to every read,
+  permanently. Confirmed live on one pathway: the concept taken through the script step
+  reported `completed`, while the one given a hand-written script reported
+  `content=completed` *and* `Activity not found` at the same time. `_ensure_registered`
+  therefore probes the status endpoint and, only on a genuine not-found, calls the script
+  endpoint to mint the row — one wasted script generation, skipped entirely whenever the
+  row already exists (re-runs, and anything that went through
+  `generate_simulation_script`). Registering is deliberately done *after* the KB push,
+  because row creation copies the concept's `kb_url` onto the activity.
+  **The Arturo-side fix is to `get_or_create` that row in `assessment_generation`.**
 - **Arturo never reads brand colours from the tenant record.** `reelSettings.brand_colors`
   is *required* on every generate call and the generation path does no tenant lookup —
   the only tenant-colour code attaches branding to the *status/playback* response. So a

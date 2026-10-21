@@ -49,6 +49,35 @@ class TestSetSessionTool:
         message = await call_expecting_error(server, "set_session", cookie="   ")
         assert "must not be empty" in message
 
+    @respx.mock
+    async def test_a_transient_401_does_not_reject_a_live_cookie(self, server, settings):
+        # Seen live: the same cookie refused, then accepted on the immediately
+        # following retry. Arturo drops session state briefly; refusing a good
+        # cookie makes the model ask the user for one they already supplied.
+        respx.get(f"{API}/auth/user-details/").mock(
+            side_effect=[
+                httpx.Response(401, json={"detail": "Authentication credentials were not provided."}),
+                httpx.Response(200, json={"success": True, "user": {"email": "a@b.c"}}),
+            ]
+        )
+
+        result = await call(server, "set_session", cookie="live-cookie")
+
+        assert result["stored"] is True
+        assert resolve_session_cookie(None, settings) == "live-cookie"
+
+    @respx.mock
+    async def test_a_truly_dead_cookie_still_fails_after_the_retry(self, server, settings):
+        route = respx.get(f"{API}/auth/user-details/").mock(
+            return_value=httpx.Response(401, json={"detail": "Authentication credentials were not provided."})
+        )
+
+        message = await call_expecting_error(server, "set_session", cookie="stale-cookie")
+
+        assert "expired" in message
+        assert len(route.calls) == 2, "one retry, not a loop"
+        assert resolve_session_cookie(None, settings) == "fallback-cookie"
+
 
 class TestSessionResolution:
     def test_prefers_connection_header_over_configured_fallback(self, settings):
