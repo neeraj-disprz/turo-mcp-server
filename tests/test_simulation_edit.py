@@ -114,25 +114,25 @@ class TestAudioEdit:
             unique_id="u1",
             file_name="a_1.mp3",
             text="Let's talk about the deadline.",
-            voice="adam",
+            voice="pNInz6obpgDQGcFmaJgB",
         )
 
         body = body_of(route)
         assert body["file_name"] == "a_1.mp3"
         assert body["rephrased_script"] == "Let's talk about the deadline."
-        assert body["voice_model"] == "adam"
+        assert body["voice_model"] == "pNInz6obpgDQGcFmaJgB"
         assert body["lang"] == "en-us"
 
-    async def test_an_unknown_voice_lists_the_valid_ones(self, server):
+    async def test_a_voice_that_is_not_a_catalog_id_is_refused(self, server):
         message = await call_expecting_error(
             server,
             "replace_simulation_audio",
             unique_id="u1",
             file_name="a_1.mp3",
             text="hi",
-            voice="morgan",
+            voice="adam",
         )
-        assert "adam" in message
+        assert "list_reel_voices" in message
 
     async def test_empty_text_is_refused(self, server):
         message = await call_expecting_error(
@@ -141,7 +141,7 @@ class TestAudioEdit:
             unique_id="u1",
             file_name="a_1.mp3",
             text="   ",
-            voice="adam",
+            voice="pNInz6obpgDQGcFmaJgB",
         )
         assert "empty" in message
 

@@ -202,9 +202,11 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
 
     @server.tool(
         description=(
-            "List the voices available for Reel 3.0, with preview URLs. The id returned "
-            "here is the only acceptable voice_id for generate_reel3 — legacy aliases like "
-            "'en-us-m-adam' are rejected by the Author service."
+            "List the available voices, with preview URLs. Reel 3.0 and Single-Turn "
+            "Simulation share this one catalog, so the id returned here is what "
+            "generate_reel3, generate_simulation and replace_simulation_audio all take — "
+            "legacy aliases like 'en-us-m-adam' and the simulation's retired built-in "
+            "names are rejected."
         )
     )
     async def list_reel_voices(ctx: Context, search: str = "") -> dict[str, Any]:

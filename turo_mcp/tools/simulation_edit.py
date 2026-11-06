@@ -21,9 +21,7 @@ from ..blob import resolve_blob_location
 from ..client import ArturoClient
 from ..config import Settings
 from ..errors import InvalidArgument
-
-# Same aliases the generation step accepts.
-VOICES = ("adam", "alice", "charlie", "arnold", "rachel")
+from ..voices import validate_cast
 
 
 def register(server: MCPServer, settings: Settings, client_for) -> None:
@@ -123,8 +121,10 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
     @server.tool(
         description=(
             "Re-record one scene's audio from new text. file_name is the scene's audio_name "
-            "from get_simulation, and voice must be one of: adam, alice, charlie, arnold, "
-            "rachel — keep it consistent with the speaker that scene already uses. This "
+            "from get_simulation, and voice is a voice id from list_reel_voices — keep it "
+            "the one the activity's settings already use for that speaker (vo1 for char1, "
+            "vo2 for char2, vo3 for the narrator), or the scene will change speaker "
+            "mid-simulation. This "
             "replaces only the audio; call save_simulation too if the written narration "
             "should change to match."
         )
@@ -139,8 +139,7 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
     ) -> dict[str, Any]:
         if not text.strip():
             raise InvalidArgument("text is empty. Pass the line this scene should speak.")
-        if voice not in VOICES:
-            raise InvalidArgument(f"voice must be one of: {', '.join(VOICES)}")
+        validate_cast([voice.strip()], ("voice",))
 
         client: ArturoClient = client_for(ctx)
         unique_id, _ = await resolve_blob_location(client, unique_id)
@@ -152,7 +151,7 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
                 "unique_id": unique_id,
                 "file_name": file_name,
                 "rephrased_script": text.strip(),
-                "voice_model": voice,
+                "voice_model": voice.strip(),
                 "lang": lang,
             },
         )

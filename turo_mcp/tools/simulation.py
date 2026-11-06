@@ -25,19 +25,9 @@ from ..client import ArturoClient
 from ..config import Settings
 from ..kb import push_concept_kb
 from ..errors import InvalidArgument, MissingPrerequisite, RequestRejected
+from ..voices import cast_voices, fetch_voices, validate_cast
 
-# Narrator voice must differ from both character voices.
-_VOICES = ("adam", "alice", "charlie", "arnold", "rachel")
-
-
-def _pick_voices(gender_a: str, gender_b: str) -> tuple[str, str, str]:
-    voice_a = "adam" if gender_a.strip().lower() == "male" else "alice"
-    voice_b = "adam" if gender_b.strip().lower() == "male" else "alice"
-    if voice_a == voice_b:
-        # Two same-gender characters still need distinguishable voices.
-        voice_b = "arnold" if voice_b == "adam" else "rachel"
-    narrator = next(v for v in ("charlie", "arnold", "rachel") if v not in {voice_a, voice_b})
-    return voice_a, voice_b, narrator
+_VOICE_ARGS = ("voice_a", "voice_b", "voice_narrator")
 
 
 async def _ensure_registered(
@@ -151,8 +141,11 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
             "ignores the KB, but registering the activity does not, so a concept with no "
             "KB at all cannot be rendered. It also means a concept left without one "
             "cannot have a script regenerated later, and the UI will offer to generate "
-            "one, which overwrites authored content. Voices are chosen automatically from the characters' "
-            "genders unless you override them. Returns blob_location — use that to poll "
+            "one, which overwrites authored content. Voices are cast automatically from "
+            "the characters' genders unless you override them; an override must be a "
+            "voice id from list_reel_voices (simulations and reels share one catalog), "
+            "and the two characters and the narrator each need a different one. "
+            "Returns blob_location — use that to poll "
             "get_simulation. Takes 2-5 minutes."
         )
     )
@@ -176,19 +169,20 @@ def register(server: MCPServer, settings: Settings, client_for) -> None:
                     "generate_simulation_script."
                 )
 
-        auto_a, auto_b, auto_narrator = _pick_voices(
-            str(script.get("gender_a", "")), str(script.get("gender_b", ""))
-        )
-        chosen = {
-            "vol1": voice_a or auto_a,
-            "vol2": voice_b or auto_b,
-            "vol3": voice_narrator or auto_narrator,
-        }
-        for field, value in chosen.items():
-            if value not in _VOICES:
-                raise InvalidArgument(f"{field} must be one of: {', '.join(_VOICES)}")
-
         client: ArturoClient = client_for(ctx)
+
+        # Voices are ids from the shared catalog, so any slot the caller left
+        # empty has to be cast from it rather than from a name we hold locally.
+        preset = (voice_a.strip(), voice_b.strip(), voice_narrator.strip())
+        cast = list(preset)
+        if not all(cast):
+            cast = cast_voices(
+                await fetch_voices(client),
+                (str(script.get("gender_a", "")), str(script.get("gender_b", "")), ""),
+                preset,
+            )
+        validate_cast(cast, _VOICE_ARGS)
+        chosen = dict(zip(("vol1", "vol2", "vol3"), cast))
 
         # Store the source material on the concept before rendering. The render
         # itself never reads the KB — it works from blob_id and the script you

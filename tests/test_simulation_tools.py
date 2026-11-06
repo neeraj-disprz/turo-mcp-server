@@ -7,7 +7,7 @@ import json
 import pytest
 import respx
 
-from turo_mcp.tools.simulation import _pick_voices
+from turo_mcp.voices import cast_voices
 
 from .conftest import API, body_of, call, call_expecting_error
 
@@ -23,6 +23,21 @@ SCRIPT = {
 
 STATUS = f"{API}/active-learning/get-assessment-status/"
 SCRIPT_STEP = f"{API}/active-learning/generate-script/"
+
+# Shaped like GET /reels/voices. Ids are ElevenLabs-style because that is the
+# only thing the content service can turn into audio.
+CATALOG = [
+    {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam", "gender": "male"},
+    {"id": "VR6AewLTigWG4xSOukaG", "name": "Arnold", "gender": "male"},
+    {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella", "gender": "female"},
+    {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel", "gender": "female"},
+]
+
+
+def catalog_available():
+    return respx.get(f"{API}/reels/voices").mock(
+        return_value=httpx.Response(200, json={"voices": CATALOG})
+    )
 
 
 def already_registered():
@@ -40,20 +55,26 @@ def not_registered():
 
 
 class TestVoiceAssignment:
-    def test_voices_follow_character_gender(self):
-        assert _pick_voices("male", "female")[:2] == ("adam", "alice")
+    EMPTY = ("", "", "")
 
-    @pytest.mark.parametrize("gender", ["male", "female"])
-    def test_same_gender_characters_still_get_distinct_voices(self, gender):
-        voice_a, voice_b, _ = _pick_voices(gender, gender)
-        assert voice_a != voice_b, "two characters sharing a voice is unlistenable"
+    def test_voices_follow_character_gender(self):
+        voice_a, voice_b, _ = cast_voices(CATALOG, ("male", "female", ""), self.EMPTY)
+        assert voice_a == "pNInz6obpgDQGcFmaJgB"  # Adam, male
+        assert voice_b == "EXAVITQu4vr4xnSDxMaL"  # Bella, female
 
     @pytest.mark.parametrize(
         ("gender_a", "gender_b"), [("male", "female"), ("male", "male"), ("female", "female")]
     )
-    def test_narrator_is_never_one_of_the_character_voices(self, gender_a, gender_b):
-        voice_a, voice_b, narrator = _pick_voices(gender_a, gender_b)
-        assert narrator not in {voice_a, voice_b}
+    def test_every_speaker_gets_a_different_voice(self, gender_a, gender_b):
+        cast = cast_voices(CATALOG, (gender_a, gender_b, ""), self.EMPTY)
+        assert len(set(cast)) == 3, "two speakers sharing a voice is unlistenable"
+
+    def test_a_supplied_voice_is_kept_and_not_reused(self):
+        cast = cast_voices(
+            CATALOG, ("male", "male", ""), ("VR6AewLTigWG4xSOukaG", "", "")
+        )
+        assert cast[0] == "VR6AewLTigWG4xSOukaG"
+        assert len(set(cast)) == 3
 
 
 class TestScriptGeneration:
@@ -97,8 +118,9 @@ class TestScriptGeneration:
 
 class TestGeneration:
     @respx.mock
-    async def test_generation_assigns_voices_and_returns_the_poll_handle(self, server):
+    async def test_generation_casts_voices_and_returns_the_poll_handle(self, server):
         already_registered()
+        catalog_available()
         route = respx.post(f"{API}/active-learning/assessment-generation/").mock(
             return_value=httpx.Response(202, json={"blob_location": "u1-en-us"})
         )
@@ -113,14 +135,20 @@ class TestGeneration:
 
         body = json.loads(route.calls[0].request.read())
         assert body["blob_id"] == "u1"
-        assert (body["vol1"], body["vol2"]) == ("adam", "alice")
-        assert body["vol3"] not in {"adam", "alice"}
+        # SCRIPT is male/female, so each character takes the first free voice of
+        # their gender and the narrator takes the first one still unused.
+        assert [body["vol1"], body["vol2"], body["vol3"]] == [
+            "pNInz6obpgDQGcFmaJgB",  # Adam, male
+            "EXAVITQu4vr4xnSDxMaL",  # Bella, female
+            "VR6AewLTigWG4xSOukaG",  # Arnold, whoever is left
+        ]
         assert result["blob_location"] == "u1-en-us"
         assert "Poll get_simulation" in result["next"]
 
     @respx.mock
     async def test_explicit_voices_override_the_automatic_choice(self, server):
         already_registered()
+        catalog_available()
         route = respx.post(f"{API}/active-learning/assessment-generation/").mock(
             return_value=httpx.Response(202, json={})
         )
@@ -131,11 +159,34 @@ class TestGeneration:
             script=SCRIPT,
             module_name="m",
             module_info="i",
-            voice_a="rachel",
+            voice_a="21m00Tcm4TlvDq8ikWAM",
         )
-        assert json.loads(route.calls[0].request.read())["vol1"] == "rachel"
+        assert json.loads(route.calls[0].request.read())["vol1"] == "21m00Tcm4TlvDq8ikWAM"
 
-    async def test_an_unknown_voice_lists_the_valid_ones(self, server):
+    @respx.mock
+    async def test_a_full_cast_needs_no_catalog_lookup(self, server):
+        already_registered()
+        catalog = catalog_available()
+        route = respx.post(f"{API}/active-learning/assessment-generation/").mock(
+            return_value=httpx.Response(202, json={})
+        )
+        await call(
+            server,
+            "generate_simulation",
+            unique_id="u1",
+            script=SCRIPT,
+            module_name="m",
+            module_info="i",
+            voice_a="pNInz6obpgDQGcFmaJgB",
+            voice_b="EXAVITQu4vr4xnSDxMaL",
+            voice_narrator="VR6AewLTigWG4xSOukaG",
+        )
+        assert not catalog.called
+        assert json.loads(route.calls[0].request.read())["vol3"] == "VR6AewLTigWG4xSOukaG"
+
+    async def test_a_retired_built_in_name_says_so(self, server):
+        """The five names worked until the voice cast moved to the shared catalog,
+        so the error has to explain the migration, not just reject the value."""
         message = await call_expecting_error(
             server,
             "generate_simulation",
@@ -143,9 +194,27 @@ class TestGeneration:
             script=SCRIPT,
             module_name="m",
             module_info="i",
-            voice_a="morgan",
+            voice_a="adam",
+            voice_b="pNInz6obpgDQGcFmaJgB",
+            voice_narrator="VR6AewLTigWG4xSOukaG",
         )
-        assert "adam" in message
+        assert "voice_a" in message
+        assert "list_reel_voices" in message
+        assert "retired" in message
+
+    async def test_one_voice_used_twice_is_refused(self, server):
+        message = await call_expecting_error(
+            server,
+            "generate_simulation",
+            unique_id="u1",
+            script=SCRIPT,
+            module_name="m",
+            module_info="i",
+            voice_a="pNInz6obpgDQGcFmaJgB",
+            voice_b="pNInz6obpgDQGcFmaJgB",
+            voice_narrator="VR6AewLTigWG4xSOukaG",
+        )
+        assert "different voice" in message
 
     async def test_a_script_missing_its_dialogue_is_caught_before_the_call(self, server):
         message = await call_expecting_error(
@@ -172,6 +241,7 @@ class TestActivityRegistration:
     @respx.mock
     async def test_an_unregistered_concept_is_registered_before_rendering(self, server):
         not_registered()
+        catalog_available()
         step = respx.post(SCRIPT_STEP).mock(
             return_value=httpx.Response(200, json={"unique_id": "c1"})
         )
@@ -195,6 +265,7 @@ class TestActivityRegistration:
     @respx.mock
     async def test_an_already_registered_concept_skips_the_wasted_generation(self, server):
         already_registered()
+        catalog_available()
         step = respx.post(SCRIPT_STEP)
         respx.post(f"{API}/active-learning/assessment-generation/").mock(
             return_value=httpx.Response(202, json={})
@@ -221,6 +292,7 @@ class TestActivityRegistration:
             side_effect=lambda request: calls.append("kb") or httpx.Response(200, json={})
         )
         not_registered()
+        catalog_available()
         respx.post(SCRIPT_STEP).mock(
             side_effect=lambda request: calls.append("register") or httpx.Response(200, json={})
         )
@@ -242,6 +314,7 @@ class TestActivityRegistration:
     @respx.mock
     async def test_a_failed_registration_stops_the_render_and_explains_itself(self, server):
         not_registered()
+        catalog_available()
         respx.post(SCRIPT_STEP).mock(
             return_value=httpx.Response(404, json={"error": "Learning pitstop not found"})
         )
@@ -270,6 +343,7 @@ class TestActivityRegistration:
         # fresh concept with no KB cannot be rendered at all, and the raw
         # upstream error gives the model nothing to act on.
         not_registered()
+        catalog_available()
         respx.post(SCRIPT_STEP).mock(
             return_value=httpx.Response(
                 500,
@@ -369,6 +443,7 @@ class TestSimulationKbPush:
     @respx.mock
     async def test_the_kb_is_pushed_before_the_render_is_queued(self, server):
         already_registered()
+        catalog_available()
         kb = respx.post(f"{API}/kb/text/update/").mock(
             return_value=httpx.Response(200, json={"success": True})
         )
@@ -416,6 +491,7 @@ class TestSimulationKbPush:
     @respx.mock
     async def test_omitting_the_kb_leaves_the_stored_one_untouched(self, server):
         already_registered()
+        catalog_available()
         kb = respx.post(f"{API}/kb/text/update/").mock(return_value=httpx.Response(200, json={}))
         respx.post(f"{API}/active-learning/assessment-generation/").mock(
             return_value=httpx.Response(200, json={"blob_location": "b1"})

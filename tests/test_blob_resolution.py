@@ -184,6 +184,6 @@ class TestToolsUseTheResolvedLocation:
             unique_id=CONCEPT,
             file_name="a_1.mp3",
             text="New line.",
-            voice="adam",
+            voice="pNInz6obpgDQGcFmaJgB",
         )
         assert body_of(route)["unique_id"] == SUFFIXED
